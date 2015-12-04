@@ -1,14 +1,11 @@
 package com.imaginarycode.minecraft.redisbungee;
 
-import com.google.common.net.InetAddresses;
-import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
-import com.google.gson.reflect.TypeToken;
-import com.imaginarycode.minecraft.redisbungee.events.PlayerChangedServerNetworkEvent;
-import com.imaginarycode.minecraft.redisbungee.events.PlayerJoinedNetworkEvent;
-import com.imaginarycode.minecraft.redisbungee.events.PlayerLeftNetworkEvent;
-import com.imaginarycode.minecraft.redisbungee.events.PubSubMessageEvent;
-import com.imaginarycode.minecraft.redisbungee.util.InternalCache;
+import java.net.InetAddress;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.logging.Level;
+
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import net.md_5.bungee.api.connection.ProxiedPlayer;
@@ -18,12 +15,15 @@ import net.md_5.bungee.api.plugin.Listener;
 import net.md_5.bungee.event.EventHandler;
 import redis.clients.jedis.Jedis;
 
-import java.net.InetAddress;
-import java.util.UUID;
-import java.util.concurrent.Callable;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.TimeUnit;
-import java.util.logging.Level;
+import com.google.common.net.InetAddresses;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import com.google.gson.reflect.TypeToken;
+import com.imaginarycode.minecraft.redisbungee.events.PlayerChangedServerNetworkEvent;
+import com.imaginarycode.minecraft.redisbungee.events.PlayerJoinedNetworkEvent;
+import com.imaginarycode.minecraft.redisbungee.events.PlayerLeftNetworkEvent;
+import com.imaginarycode.minecraft.redisbungee.events.PubSubMessageEvent;
+import com.imaginarycode.minecraft.redisbungee.util.InternalCache;
 
 /**
  * This class manages all the data that RedisBungee fetches from Redis, along with updates to that data.
@@ -33,10 +33,10 @@ import java.util.logging.Level;
 public class DataManager implements Listener {
     private final RedisBungee plugin;
     // TODO: Add cleanup for this.
-    private final InternalCache<UUID, String> serverCache = createCache();
-    private final InternalCache<UUID, String> proxyCache = createCache(TimeUnit.MINUTES.toMillis(60));
-    private final InternalCache<UUID, InetAddress> ipCache = createCache(TimeUnit.MINUTES.toMillis(60));
-    private final InternalCache<UUID, Long> lastOnlineCache = createCache(TimeUnit.MINUTES.toMillis(60));
+    private final InternalCache<String, String> serverCache = createCache();
+    private final InternalCache<String, String> proxyCache = createCache(TimeUnit.MINUTES.toMillis(60));
+    private final InternalCache<String, InetAddress> ipCache = createCache(TimeUnit.MINUTES.toMillis(60));
+    private final InternalCache<String, Long> lastOnlineCache = createCache(TimeUnit.MINUTES.toMillis(60));
 
     public DataManager(RedisBungee plugin) {
         this.plugin = plugin;
@@ -60,28 +60,28 @@ public class DataManager implements Listener {
 
     private final JsonParser parser = new JsonParser();
 
-    public String getServer(final UUID uuid) {
-        ProxiedPlayer player = plugin.getProxy().getPlayer(uuid);
+    public String getServer(final String playeName) {
+        ProxiedPlayer player = plugin.getProxy().getPlayer(playeName);
 
         if (player != null)
             return player.getServer() != null ? player.getServer().getInfo().getName() : null;
 
         try {
-            return serverCache.get(uuid, new Callable<String>() {
+            return serverCache.get(playeName, new Callable<String>() {
                 @Override
                 public String call() throws Exception {
                     try (Jedis tmpRsc = plugin.getPool().getResource()) {
-                        return tmpRsc.hget("player:" + uuid, "server");
+                        return tmpRsc.hget("player:" + playeName, "server");
                     }
                 }
             });
         } catch (ExecutionException e) {
             plugin.getLogger().log(Level.SEVERE, "Unable to get server", e);
-            throw new RuntimeException("Unable to get server for " + uuid, e);
+            throw new RuntimeException("Unable to get server for " + playeName, e);
         }
     }
 
-    public String getProxy(final UUID uuid) {
+    public String getProxy(final String uuid) {
         ProxiedPlayer player = plugin.getProxy().getPlayer(uuid);
 
         if (player != null)
@@ -102,7 +102,7 @@ public class DataManager implements Listener {
         }
     }
 
-    public InetAddress getIp(final UUID uuid) {
+    public InetAddress getIp(final String uuid) {
         ProxiedPlayer player = plugin.getProxy().getPlayer(uuid);
 
         if (player != null)
@@ -124,7 +124,7 @@ public class DataManager implements Listener {
         }
     }
 
-    public long getLastOnline(final UUID uuid) {
+    public long getLastOnline(final String uuid) {
         ProxiedPlayer player = plugin.getProxy().getPlayer(uuid);
 
         if (player != null)
@@ -146,7 +146,7 @@ public class DataManager implements Listener {
         }
     }
 
-    private void invalidate(UUID uuid) {
+    private void invalidate(String uuid) {
         ipCache.invalidate(uuid);
         lastOnlineCache.invalidate(uuid);
         serverCache.invalidate(uuid);
@@ -156,13 +156,13 @@ public class DataManager implements Listener {
     @EventHandler
     public void onPostLogin(PostLoginEvent event) {
         // Invalidate all entries related to this player, since they now lie.
-        invalidate(event.getPlayer().getUniqueId());
+        invalidate(event.getPlayer().getName());
     }
 
     @EventHandler
     public void onPlayerDisconnect(PlayerDisconnectEvent event) {
         // Invalidate all entries related to this player, since they now lie.
-        invalidate(event.getPlayer().getUniqueId());
+        invalidate(event.getPlayer().getName());
     }
 
     @EventHandler
@@ -223,7 +223,7 @@ public class DataManager implements Listener {
     @Getter
     @RequiredArgsConstructor
     static class DataManagerMessage<T> {
-        private final UUID target;
+        private final String target;
         private final String source = RedisBungee.getApi().getServerId();
         private final Action action; // for future use!
         private final T payload;

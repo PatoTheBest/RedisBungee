@@ -3,8 +3,6 @@ package com.imaginarycode.minecraft.redisbungee.events;
 import lombok.ToString;
 import net.md_5.bungee.api.plugin.Event;
 
-import java.util.UUID;
-
 /**
  * This event is sent when a player joins the network. RedisBungee sends the event only when
  * the proxy the player has been connected to is different than the local proxy.
@@ -16,13 +14,13 @@ import java.util.UUID;
  */
 @ToString
 public class PlayerJoinedNetworkEvent extends Event {
-    private final UUID uuid;
+    private final String playerName;
 
-    public PlayerJoinedNetworkEvent(UUID uuid) {
-        this.uuid = uuid;
+    public PlayerJoinedNetworkEvent(String playerName) {
+        this.playerName = playerName;
     }
 
-    public UUID getUuid() {
-        return uuid;
+    public String getUuid() {
+        return playerName;
     }
 }

@@ -1,14 +1,14 @@
 package com.imaginarycode.minecraft.redisbungee;
 
-import com.google.common.base.Joiner;
-import com.google.common.collect.HashMultimap;
-import com.google.common.collect.ImmutableList;
-import com.google.common.collect.Multimap;
-import com.google.common.io.ByteArrayDataInput;
-import com.google.common.io.ByteArrayDataOutput;
-import com.google.common.io.ByteStreams;
-import com.imaginarycode.minecraft.redisbungee.events.PubSubMessageEvent;
-import com.imaginarycode.minecraft.redisbungee.util.RedisCallable;
+import java.net.InetAddress;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
 import lombok.AllArgsConstructor;
 import net.md_5.bungee.api.AbstractReconnectHandler;
 import net.md_5.bungee.api.ChatColor;
@@ -18,28 +18,34 @@ import net.md_5.bungee.api.chat.BaseComponent;
 import net.md_5.bungee.api.chat.ComponentBuilder;
 import net.md_5.bungee.api.chat.TextComponent;
 import net.md_5.bungee.api.config.ServerInfo;
-import net.md_5.bungee.api.connection.ProxiedPlayer;
 import net.md_5.bungee.api.connection.Server;
-import net.md_5.bungee.api.event.*;
+import net.md_5.bungee.api.event.LoginEvent;
+import net.md_5.bungee.api.event.PlayerDisconnectEvent;
+import net.md_5.bungee.api.event.PluginMessageEvent;
+import net.md_5.bungee.api.event.PostLoginEvent;
+import net.md_5.bungee.api.event.ProxyPingEvent;
+import net.md_5.bungee.api.event.ServerConnectedEvent;
 import net.md_5.bungee.api.plugin.Listener;
 import net.md_5.bungee.event.EventHandler;
 import net.md_5.bungee.event.EventPriority;
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.Pipeline;
 
-import java.net.InetAddress;
-import java.util.*;
+import com.google.common.base.Joiner;
+import com.google.common.collect.HashMultimap;
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.Multimap;
+import com.google.common.io.ByteArrayDataInput;
+import com.google.common.io.ByteArrayDataOutput;
+import com.google.common.io.ByteStreams;
+import com.imaginarycode.minecraft.redisbungee.events.PubSubMessageEvent;
+import com.imaginarycode.minecraft.redisbungee.util.RedisCallable;
 
 @AllArgsConstructor
 public class RedisBungeeListener implements Listener {
     private static final BaseComponent[] ALREADY_LOGGED_IN =
             new ComponentBuilder("You are already logged on to this server.").color(ChatColor.RED)
                     .append("\n\nIt may help to try logging in again in a few minutes.\nIf this does not resolve your issue, please contact staff.")
-                    .color(ChatColor.GRAY)
-                    .create();
-    private static final BaseComponent[] ONLINE_MODE_RECONNECT =
-            new ComponentBuilder("Whoops! You need to reconnect.").color(ChatColor.RED)
-                    .append("\n\nWe found someone online using your username. They were kicked and you may reconnect.\nIf this does not work, please contact staff.")
                     .color(ChatColor.GRAY)
                     .create();
     private final RedisBungee plugin;
@@ -51,29 +57,15 @@ public class RedisBungeeListener implements Listener {
     public void onLogin(final LoginEvent event) {
         event.registerIntent(plugin);
         plugin.getProxy().getScheduler().runAsync(plugin, new RedisCallable<Void>(plugin) {
-            @Override
+			@Override
             protected Void call(Jedis jedis) {
                 if (event.isCancelled()) {
                     event.completeIntent(plugin);
                     return null;
                 }
 
-                // We make sure they aren't trying to use an existing player's name.
-                // This is problematic for online-mode servers as they always disconnect old clients.
-                if (plugin.getProxy().getConfig().isOnlineMode()) {
-                    ProxiedPlayer player = plugin.getProxy().getPlayer(event.getConnection().getName());
-
-                    if (player != null) {
-                        event.setCancelled(true);
-                        // TODO: Make it accept a BaseComponent[] like everything else.
-                        event.setCancelReason(TextComponent.toLegacyText(ONLINE_MODE_RECONNECT));
-                        event.completeIntent(plugin);
-                        return null;
-                    }
-                }
-
                 for (String s : plugin.getServerIds()) {
-                    if (jedis.sismember("proxy:" + s + ":usersOnline", event.getConnection().getUniqueId().toString())) {
+                    if (jedis.sismember("proxy:" + s + ":usersOnline", event.getConnection().getName())) {
                         event.setCancelled(true);
                         // TODO: Make it accept a BaseComponent[] like everything else.
                         event.setCancelReason(TextComponent.toLegacyText(ALREADY_LOGGED_IN));
@@ -83,7 +75,7 @@ public class RedisBungeeListener implements Listener {
                 }
 
                 Pipeline pipeline = jedis.pipelined();
-                plugin.getUuidTranslator().persistInfo(event.getConnection().getName(), event.getConnection().getUniqueId(), pipeline);
+                //plugin.getUuidTranslator().persistInfo(event.getConnection().getName(), event.getConnection().getUniqueId(), pipeline);
                 RedisUtil.createPlayer(event.getConnection(), pipeline, false);
                 // We're not publishing, the API says we only publish at PostLoginEvent time.
                 pipeline.sync();
@@ -100,7 +92,7 @@ public class RedisBungeeListener implements Listener {
             @Override
             protected Void call(Jedis jedis) {
                 jedis.publish("redisbungee-data", RedisBungee.getGson().toJson(new DataManager.DataManagerMessage<>(
-                        event.getPlayer().getUniqueId(), DataManager.DataManagerMessage.Action.JOIN,
+                        event.getPlayer().getName(), DataManager.DataManagerMessage.Action.JOIN,
                         new DataManager.LoginPayload(event.getPlayer().getAddress().getAddress()))));
                 return null;
             }
@@ -113,7 +105,7 @@ public class RedisBungeeListener implements Listener {
             @Override
             protected Void call(Jedis jedis) {
                 Pipeline pipeline = jedis.pipelined();
-                RedisUtil.cleanUpPlayer(event.getPlayer().getUniqueId().toString(), pipeline);
+                RedisUtil.cleanUpPlayer(event.getPlayer().getName(), pipeline);
                 pipeline.sync();
                 return null;
             }
@@ -125,9 +117,9 @@ public class RedisBungeeListener implements Listener {
         plugin.getProxy().getScheduler().runAsync(plugin, new RedisCallable<Void>(plugin) {
             @Override
             protected Void call(Jedis jedis) {
-                jedis.hset("player:" + event.getPlayer().getUniqueId().toString(), "server", event.getServer().getInfo().getName());
+                jedis.hset("player:" + event.getPlayer().getName(), "server", event.getServer().getInfo().getName());
                 jedis.publish("redisbungee-data", RedisBungee.getGson().toJson(new DataManager.DataManagerMessage<>(
-                        event.getPlayer().getUniqueId(), DataManager.DataManagerMessage.Action.SERVER_CHANGE,
+                        event.getPlayer().getName(), DataManager.DataManagerMessage.Action.SERVER_CHANGE,
                         new DataManager.ServerChangePayload(event.getServer().getInfo().getName()))));
                 return null;
             }
@@ -197,7 +189,7 @@ public class RedisBungeeListener implements Listener {
                     switch (subchannel) {
                         case "PlayerList":
                             out.writeUTF("PlayerList");
-                            Set<UUID> original = Collections.emptySet();
+                            Set<String> original = Collections.emptySet();
                             type = in.readUTF();
                             if (type.equals("ALL")) {
                                 out.writeUTF("ALL");
@@ -209,8 +201,8 @@ public class RedisBungeeListener implements Listener {
                                 }
                             }
                             Set<String> players = new HashSet<>();
-                            for (UUID uuid : original)
-                                players.add(plugin.getUuidTranslator().getNameFromUuid(uuid, false));
+                            for (String playerName : original)
+                                players.add(playerName);
                             out.writeUTF(Joiner.on(',').join(players));
                             break;
                         case "PlayerCount":
@@ -232,12 +224,12 @@ public class RedisBungeeListener implements Listener {
                             String user = in.readUTF();
                             out.writeUTF("LastOnline");
                             out.writeUTF(user);
-                            out.writeLong(RedisBungee.getApi().getLastOnline(plugin.getUuidTranslator().getTranslatedUuid(user, true)));
+                            out.writeLong(RedisBungee.getApi().getLastOnline(user));
                             break;
                         case "ServerPlayers":
                             String type1 = in.readUTF();
                             out.writeUTF("ServerPlayers");
-                            Multimap<String, UUID> multimap = RedisBungee.getApi().getServerToPlayers();
+                            Multimap<String, String> multimap = RedisBungee.getApi().getServerToPlayers();
 
                             boolean includesUsers;
 
@@ -257,15 +249,15 @@ public class RedisBungeeListener implements Listener {
 
                             if (includesUsers) {
                                 Multimap<String, String> human = HashMultimap.create();
-                                for (Map.Entry<String, UUID> entry : multimap.entries()) {
-                                    human.put(entry.getKey(), plugin.getUuidTranslator().getNameFromUuid(entry.getValue(), false));
+                                for (Map.Entry<String, String> entry : multimap.entries()) {
+                                    human.put(entry.getKey(), entry.getValue());
                                 }
                                 serializeMultimap(human, true, out);
                             } else {
-                                // Due to Java generics, we are forced to coerce UUIDs into strings. This is less
+                                // Due to Java generics, we are forced to coerce Strings into strings. This is less
                                 // expensive than looking up names, since we just want counts.
                                 Multimap<String, String> flunk = HashMultimap.create();
-                                for (Map.Entry<String, UUID> entry : multimap.entries()) {
+                                for (Map.Entry<String, String> entry : multimap.entries()) {
                                     flunk.put(entry.getKey(), entry.getValue().toString());
                                 }
                                 serializeMultimap(flunk, false, out);
