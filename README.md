@@ -6,7 +6,7 @@ RedisBungee bridges [Redis](http://redis.io) and BungeeCord together. This is th
 
 RedisBungee is distributed as a [maven](http://maven.apache.org) project. To compile it and install it in your local Maven repository:
 
-    git clone https://github.com/Pato_the_best/RedisBungee.git
+    git clone https://github.com/PatoTheBest/RedisBungee.git
     cd RedisBungee
     mvn clean install
 
